@@ -1,7 +1,9 @@
 import uuid
 from decimal import Decimal
 from django.conf import settings
-from django.core.validators import MinValueValidator, RegexValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 from django.db import models
 from django.db.models import Q
 
@@ -136,6 +138,56 @@ class Invoice(models.Model):
     class Meta:
         ordering = ['-created_at']
         constraints = [models.CheckConstraint(condition=Q(amount__gt=0), name='positive_invoice_amount')]
+
+
+class Consultation(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT)
+    appointment = models.OneToOneField(Appointment, on_delete=models.PROTECT)
+    clinician = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    symptoms = models.TextField(max_length=10000)
+    examination = models.TextField(blank=True, max_length=10000)
+    diagnosis = models.TextField(max_length=5000)
+    treatment_plan = models.TextField(max_length=10000)
+    allergy_status = models.CharField(max_length=12, choices=[('unknown', 'Not assessed / unknown'), ('none', 'No known allergies'), ('known', 'Known allergies')])
+    allergies = models.TextField(blank=True, max_length=2000)
+    temperature = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, validators=[MinValueValidator(25), MaxValueValidator(45)])
+    pulse = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(20), MaxValueValidator(250)])
+    respiratory_rate = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    oxygen_saturation = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    systolic = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(40), MaxValueValidator(300)])
+    diastolic = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(20), MaxValueValidator(200)])
+    weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0.1')), MaxValueValidator(500)])
+    follow_up_date = models.DateField(null=True, blank=True)
+    follow_up_instructions = models.TextField(blank=True, max_length=5000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def clean(self):
+        if self.appointment_id and (self.appointment.branch_id != self.branch_id or self.appointment.patient_id != self.patient_id):
+            raise ValidationError('The appointment, patient and consultation must belong to the same branch.')
+        if (self.systolic is None) != (self.diastolic is None):
+            raise ValidationError('Enter both blood pressure values, or leave both blank.')
+        if self.systolic is not None and self.diastolic is not None and self.systolic <= self.diastolic:
+            raise ValidationError('Systolic pressure must exceed diastolic pressure.')
+        if self.allergy_status == 'known' and not self.allergies.strip():
+            raise ValidationError('Describe the known allergies and reactions.')
+        if self.allergy_status != 'known' and self.allergies.strip():
+            raise ValidationError('Select Known allergies when entering allergy details.')
+        if self.follow_up_date and self.follow_up_date < timezone.localdate():
+            raise ValidationError('Follow-up cannot be before today.')
+
+
+class ConsultationAddendum(models.Model):
+    consultation = models.ForeignKey(Consultation, on_delete=models.PROTECT, related_name='addenda')
+    clinician = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    note = models.TextField(max_length=10000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'pk']
 
 
 class AuditEvent(models.Model):

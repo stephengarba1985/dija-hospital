@@ -10,8 +10,10 @@ const lastName = `UIValidation${Date.now()}`;
 test.afterAll(() => {
   // Remove only this test's exact synthetic patient and its dependent records.
   execFileSync(path.join(root, '.venv/bin/python'), ['manage.py', 'shell', '-c', `
-from hospital.models import Patient, Appointment, Admission, Invoice
+from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum
 patients = Patient.objects.filter(first_name='Synthetic', last_name='${lastName}')
+ConsultationAddendum.objects.filter(consultation__patient__in=patients).delete()
+Consultation.objects.filter(patient__in=patients).delete()
 Appointment.objects.filter(patient__in=patients).delete()
 Admission.objects.filter(patient__in=patients).delete()
 Invoice.objects.filter(patient__in=patients).delete()
@@ -50,7 +52,33 @@ test('registration, appointments, admission, billing and mobile navigation', asy
   await expect(row).toContainText('scheduled');
   await row.getByRole('button', { name: 'Check in', exact: true }).click();
   await expect(row).toContainText('checked in');
-  await row.getByRole('button', { name: 'Complete', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Consultations', exact: true }).click();
+  await page.getByRole('button', { name: 'New consultation' }).click();
+  dialog = page.getByRole('dialog');
+  const visitId = await dialog.getByLabel('Checked-in appointment *', { exact: true }).locator('option').filter({ hasText: lastName }).getAttribute('value');
+  await dialog.getByLabel('Checked-in appointment *', { exact: true }).selectOption(visitId);
+  await dialog.getByLabel('Temperature (°C)', { exact: true }).fill('36.7');
+  await dialog.getByLabel('Systolic BP (mmHg)', { exact: true }).fill('120');
+  await dialog.getByLabel('Diastolic BP (mmHg)', { exact: true }).fill('80');
+  await dialog.getByLabel('Symptoms & history *', { exact: true }).fill('Synthetic consultation symptoms');
+  await dialog.getByLabel('Diagnosis / clinical assessment *', { exact: true }).fill('Synthetic assessment');
+  await dialog.getByLabel('Treatment plan *', { exact: true }).fill('Synthetic treatment plan');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign & complete consultation', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
+  await row.getByRole('button', { name: 'View record', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Synthetic assessment', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('36.7', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add addendum', exact: true }).click();
+  await dialog.getByLabel('Addendum *', { exact: true }).fill('Synthetic correction recorded as an addendum');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign addendum', exact: true }).click();
+  await expect(dialog.getByText('Synthetic correction recorded as an addendum', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Synthetic assessment', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Appointments', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
   await expect(row).toContainText('completed');
 
   await page.getByRole('navigation').getByRole('button', { name: 'Admissions & wards' }).click();

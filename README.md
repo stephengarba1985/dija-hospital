@@ -8,6 +8,7 @@ A new hospital management project for a general hospital in Nigeria, separate fr
 - Dashboard with actual database counts, today's appointments, recent patients and clinic activity.
 - Patient registration, generated hospital numbers, Nigerian mobile-number validation, next-of-kin capture and paginated search.
 - Appointments by department, check-in, cancellation and clinical completion.
+- Signed consultations linked to checked-in appointments, optional measured vital signs, explicit allergy status, symptoms/history, examination, diagnosis, treatment and follow-up. Signing completes the appointment atomically; dated addenda preserve original records.
 - Admissions with occupied-bed and duplicate-admission protection; doctor-authorised discharge.
 - Naira invoices and explicit confirmation of manual payment receipts. No payment gateway or insurance processing is connected.
 - A searchable directory of 33 clinical, diagnostic, operational and administrative departments.
@@ -54,7 +55,7 @@ npm run build
 npx playwright test
 ```
 
-The 12 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → completion, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
+The 18 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → signed consultation → clinical addendum → completion, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
 
 ## Department roadmap
 
@@ -62,15 +63,32 @@ The department directory is broader than the working transaction modules. A depa
 
 | Area | Departments | Planned specialist workflows |
 | --- | --- | --- |
-| Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Encounters and clinical notes, vitals/triage, allergies, diagnosis coding, care plans, referrals, maternity records and discharge summaries |
+| Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Triage workflow, coded diagnoses, care plans, referrals, maternity records and discharge summaries |
 | Diagnostics & treatment | Laboratory, radiology, pharmacy, blood bank | Orders and results, specimen tracking, imaging/PACS integration, prescription validation, dispensing, batch/expiry stock and transfusion controls |
 | Operations | Theatre, medical records, ambulance, mortuary, nutrition, infection prevention, sterilisation, facilities | Procedure scheduling, transport, release approvals, dietary orders, surveillance, instrument tracking, equipment and housekeeping |
 | Administration | Accounts, NHIA/HMO, HR, procurement/stores, hospital administration, ICT | Receipt/reconciliation, partial payments/refunds, tariffs, authorisations/claims, rosters/payroll, stock/procurement, reporting and integrations |
 
-The current release is a development foundation, not a complete clinical electronic medical record or a production-certified hospital system. In particular, completing an appointment does not create a consultation note, and recording a payment does not move money.
+The current release is a development foundation, not a complete clinical electronic medical record or a production-certified hospital system. Directly completing an appointment does not create a consultation note; use Consultations to sign one. Treatment-plan text does not issue prescriptions or order tests; recording a payment does not move money.
 
 ## Before using real hospital records
 
 Arrange hospital-specific clinical and access review, Nigeria Data Protection Act obligations, retention/consent policies and operational sign-off. Add HTTPS deployment, managed PostgreSQL with verified TLS, backups with restore testing, shared-cache login limits, stronger account controls/MFA, access monitoring, audit-log retention, incident handling and disaster recovery. Configure `DJANGO_DEBUG=false`, a deployment secret, allowed hosts, trusted HTTPS origins and `DB_SSLMODE=verify-full` with the database provider's CA. Development launch scripts are not production deployment scripts.
 
 The frontend and Django should share an HTTPS origin through a trusted reverse proxy. Keep Django administration separately restricted. No payment, messaging or external health-service credentials are currently required or configured.
+
+## Update an existing WSL installation
+
+Stop Django and Next.js with Ctrl+C in their terminals. From the project root:
+
+```bash
+git pull --ff-only
+source .venv/bin/activate
+cd backend
+source ../.local/wsl-env.sh
+python manage.py migrate
+python manage.py runserver 127.0.0.1:8000
+```
+
+In another terminal, from the project root: `cd frontend` then `npm run dev`. Sign out and back in to refresh staff module access. No existing patients or accounts are replaced by this migration.
+
+Doctors and administrators can open **Consultations → New consultation** after a patient is checked in. Nurses can read consultation records but cannot sign or append clinical notes. Reception, billing and other roles cannot read consultation content. Use **View record → Add addendum** for corrections. Signed notes have no edit/delete API, and administration treats them as read-only. Allergy status and vitals are recorded per consultation, not as a longitudinal allergy register. Empty vital signs mean not recorded; entry bounds are data validation, not clinical reference ranges. Follow-up dates do not automatically book appointments. Only synthetic records have been validated.

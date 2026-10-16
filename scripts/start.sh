@@ -8,7 +8,12 @@ fi
 start_service() {
   local service_name="$1" service_port="$2" directory="$3"
   shift 3
-  if [ -f "$root/.local/$service_name.pid" ] && kill -0 "$(cat "$root/.local/$service_name.pid")" 2>/dev/null; then
+  local existing_pid='' process_state=''
+  if [ -f "$root/.local/$service_name.pid" ]; then
+    existing_pid="$(cat "$root/.local/$service_name.pid")"
+    process_state="$(ps -o stat= -p "$existing_pid" 2>/dev/null || true)"
+  fi
+  if [ -n "$process_state" ] && [[ "$process_state" != Z* ]] && kill -0 "$existing_pid" 2>/dev/null; then
     echo "$service_name is already running."
     return
   fi

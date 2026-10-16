@@ -15,9 +15,10 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods
 
-from .models import Branch, Department, Patient, Appointment, Admission, Invoice, AuditEvent
+from .models import Branch, Department, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum
 
 ROLES = {
+    'consultations': {'administrator', 'doctor', 'nurse'},
     'patients': {'administrator', 'receptionist', 'doctor', 'nurse'},
     'appointments': {'administrator', 'receptionist', 'doctor', 'nurse'},
     'admissions': {'administrator', 'doctor', 'nurse'},
@@ -232,6 +233,8 @@ def appointments(request):
         audit(request, 'appointment.create', appointment)
         return JsonResponse(appointment_json(appointment), status=201)
     records = scoped(Appointment, request).select_related('patient', 'department')
+    if request.GET.get('for_consultation') == '1':
+        records = records.filter(status='checked_in', consultation__isnull=True)
     if request.GET.get('date'):
         records = records.filter(scheduled_at__date=date.fromisoformat(request.GET['date']))
     audit(request, 'appointments.read')
@@ -329,3 +332,94 @@ def patient_options(request):
         records = records.filter(Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(hospital_number__icontains=query))
     audit(request, 'patient_options.read')
     return JsonResponse({'results': [{'id': str(p.pk), 'name': p.full_name, 'hospital_number': p.hospital_number} for p in records[:50]]})
+
+
+CONSULTATION_TEXT = ['symptoms', 'examination', 'diagnosis', 'treatment_plan', 'allergy_status', 'allergies', 'follow_up_instructions']
+CONSULTATION_NUMBERS = ['temperature', 'pulse', 'respiratory_rate', 'oxygen_saturation', 'systolic', 'diastolic', 'weight']
+
+
+def consultation_json(record, detail=False):
+    result = {'id': record.pk, 'patient_name': record.patient.full_name, 'patient_id': str(record.patient_id),
+        'hospital_number': record.patient.hospital_number, 'department': record.appointment.department.name,
+        'appointment_id': record.appointment_id, 'clinician': record.clinician.get_full_name() or record.clinician.username,
+        'created_at': record.created_at.isoformat()}
+    if detail:
+        result.update({field: getattr(record, field) for field in CONSULTATION_TEXT})
+        result['vitals'] = {field: str(getattr(record, field)) if getattr(record, field) is not None else None for field in CONSULTATION_NUMBERS}
+        result['follow_up_date'] = record.follow_up_date.isoformat() if record.follow_up_date else None
+        result['addenda'] = [{'id': a.pk, 'note': a.note, 'clinician': a.clinician.get_full_name() or a.clinician.username,
+            'created_at': a.created_at.isoformat()} for a in record.addenda.select_related('clinician').all()]
+    return result
+
+
+@endpoint(['GET', 'POST'], 'consultations')
+def consultations(request):
+    if request.method == 'POST':
+        if role_for(request.user) not in {'doctor', 'administrator'}:
+            return JsonResponse({'error': 'A doctor or administrator must sign consultation notes.'}, status=403)
+        data = body(request)
+        appointment = scoped(Appointment, request).select_for_update().filter(pk=data['appointment_id']).first()
+        if appointment is None:
+            return JsonResponse({'error': 'Appointment not found in your branch.'}, status=404)
+        if appointment.status != 'checked_in' or Consultation.objects.filter(appointment=appointment).exists():
+            raise ValidationError('Select a checked-in appointment without an existing consultation.')
+        values = {}
+        for field in CONSULTATION_TEXT:
+            value = data.get(field, '')
+            if not isinstance(value, str):
+                raise ValidationError('Clinical text fields must contain text.')
+            values[field] = value.strip()
+        for field in CONSULTATION_NUMBERS:
+            value = data.get(field)
+            if value is None or value == '':
+                values[field] = None
+                continue
+            if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                raise ValidationError('Enter numeric vital signs.')
+            number = Decimal(str(value))
+            if not number.is_finite() or (field not in {'temperature', 'weight'} and number != number.to_integral_value()):
+                raise ValidationError('Enter finite numeric values; counts and pressures must be whole numbers.')
+            values[field] = number
+        values['follow_up_date'] = date.fromisoformat(data['follow_up_date']) if data.get('follow_up_date') else None
+        record = Consultation(branch=request.branch, patient=appointment.patient, appointment=appointment,
+            clinician=request.user, **values)
+        record.full_clean()
+        record.save()
+        appointment.status = 'completed'
+        appointment.save(update_fields=['status'])
+        audit(request, 'consultation.sign', record)
+        audit(request, 'appointment.completed', appointment)
+        return JsonResponse({'id': record.pk}, status=201)
+    records = scoped(Consultation, request).select_related('patient', 'appointment__department', 'clinician')
+    query = request.GET.get('q', '').strip()[:120]
+    if query:
+        records = records.filter(Q(patient__first_name__icontains=query) | Q(patient__last_name__icontains=query) | Q(patient__hospital_number__icontains=query))
+    page = max(1, int(request.GET.get('page', 1)))
+    audit(request, 'consultations.read')
+    return JsonResponse({'count': records.count(), 'results': [consultation_json(c) for c in records[(page-1)*20:page*20]]})
+
+
+@endpoint(['GET'], 'consultations')
+def consultation_detail(request, pk):
+    record = scoped(Consultation, request).select_related('patient', 'appointment__department', 'clinician').filter(pk=pk).first()
+    if record is None:
+        return JsonResponse({'error': 'Consultation not found.'}, status=404)
+    audit(request, 'consultation.read', record)
+    return JsonResponse(consultation_json(record, detail=True))
+
+
+@endpoint(['POST'], 'consultations')
+def consultation_addendum(request, pk):
+    if role_for(request.user) not in {'doctor', 'administrator'}:
+        return JsonResponse({'error': 'Only doctors and administrators can add clinical addenda.'}, status=403)
+    record = scoped(Consultation, request).filter(pk=pk).first()
+    if record is None:
+        return JsonResponse({'error': 'Consultation not found.'}, status=404)
+    note = body(request).get('note', '')
+    if not isinstance(note, str):
+        raise ValidationError('Enter a text addendum.')
+    addendum = ConsultationAddendum(consultation=record, clinician=request.user, note=note.strip())
+    addendum.full_clean()
+    addendum.save()
+    audit(request, 'consultation.addendum', addendum)
+    return JsonResponse({'id': addendum.pk}, status=201)

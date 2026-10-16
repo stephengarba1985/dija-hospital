@@ -148,3 +148,92 @@ class HospitalWorkflowTests(TestCase):
         user = User.objects.create_user(username='unassigned', password='Synthetic-test-password-729!')
         self.client.force_login(user)
         self.assertEqual(self.client.get('/api/dashboard/').status_code, 403)
+
+
+class ConsultationTests(TestCase):
+    setUpTestData = classmethod(HospitalWorkflowTests.setUpTestData.__func__)
+    act_as = HospitalWorkflowTests.act_as
+    post = HospitalWorkflowTests.post
+    patch = HospitalWorkflowTests.patch
+
+    def setUp(self):
+        self.appointment = Appointment.objects.create(branch=self.branch, patient=self.patient,
+            department=self.department, scheduled_at=timezone.now(), status='checked_in')
+        self.data = {'appointment_id':self.appointment.pk, 'symptoms':'Synthetic symptoms',
+            'diagnosis':'Synthetic assessment', 'treatment_plan':'Synthetic care plan', 'allergy_status':'unknown'}
+        self.act_as('doctor')
+
+    def sign(self):
+        result = self.post('consultations/', self.data)
+        self.assertEqual(result.status_code, 201, result.content)
+        return result.json()['id']
+
+    def test_signing_completes_appointment_and_preserves_author(self):
+        from .models import Consultation
+        self.data.update(temperature='36.7', pulse='75', systolic='120', diastolic='80', oxygen_saturation='98')
+        pk = self.sign()
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, 'completed')
+        record = Consultation.objects.get(pk=pk)
+        self.assertEqual(record.clinician, self.users['doctor'])
+        detail = self.client.get(f'/api/consultations/{pk}/').json()
+        self.assertEqual(detail['vitals']['temperature'], '36.7')
+        self.assertEqual(detail['allergy_status'], 'unknown')
+        self.assertTrue(AuditEvent.objects.filter(action='consultation.sign', object_id=str(pk)).exists())
+        self.assertEqual(self.post('consultations/', self.data).status_code, 400)
+
+    def test_invalid_vitals_and_missing_notes_do_not_complete_visit(self):
+        for values in [{'pulse':'70.5'}, {'oxygen_saturation':'101'}, {'temperature':'NaN'},
+                       {'systolic':'120'}, {'systolic':'80','diastolic':'120'},
+                       {'allergy_status':'known','allergies':''}, {'diagnosis':'  '},
+                       {'treatment_plan':''}, {'follow_up_date':'2000-01-01'}]:
+            with self.subTest(values=values):
+                self.assertEqual(self.post('consultations/', {**self.data, **values}).status_code, 400)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status,'checked_in')
+
+    def test_branch_scope_on_read_write_and_addendum(self):
+        from .models import StaffProfile
+        pk = self.sign()
+        profile = self.users['doctor'].hospital_profile
+        profile.branch = self.other
+        profile.save()
+        self.assertEqual(self.client.get('/api/consultations/').json()['count'], 0)
+        self.assertEqual(self.client.get(f'/api/consultations/{pk}/').status_code, 404)
+        self.assertEqual(self.post(f'consultations/{pk}/addenda/', {'note':'Correction'}).status_code, 404)
+        self.assertEqual(self.post('consultations/', self.data).status_code, 404)
+
+    def test_only_clinical_roles_can_read_and_only_doctors_can_sign(self):
+        for role in ['receptionist','accountant','laboratory']:
+            self.act_as(role)
+            self.assertEqual(self.client.get('/api/consultations/').status_code, 403)
+            self.assertEqual(self.post('consultations/', self.data).status_code, 403)
+        self.act_as('nurse')
+        self.assertEqual(self.post('consultations/', self.data).status_code, 403)
+        self.act_as('doctor')
+        pk = self.sign()
+        self.act_as('nurse')
+        self.assertEqual(self.client.get(f'/api/consultations/{pk}/').status_code, 200)
+        self.assertEqual(self.post(f'consultations/{pk}/addenda/', {'note':'Not allowed'}).status_code, 403)
+
+    def test_addenda_preserve_original_and_no_overwrite_endpoint(self):
+        pk = self.sign()
+        self.assertEqual(self.patch(f'consultations/{pk}/', {'diagnosis':'overwrite'}).status_code, 405)
+        self.assertEqual(self.post(f'consultations/{pk}/addenda/', {'note':'Correction: synthetic additional context'}).status_code, 201)
+        self.assertEqual(self.post(f'consultations/{pk}/addenda/', {'note':'  '}).status_code, 400)
+        result = self.client.get(f'/api/consultations/{pk}/').json()
+        self.assertEqual(result['diagnosis'], self.data['diagnosis'])
+        self.assertEqual(len(result['addenda']), 1)
+        self.assertEqual(result['addenda'][0]['clinician'], 'doctor')
+
+    def test_consultation_requires_checkin_and_list_excludes_note_content(self):
+        self.appointment.status='scheduled'
+        self.appointment.save()
+        self.assertEqual(self.post('consultations/', self.data).status_code, 400)
+        self.appointment.status='checked_in'
+        self.appointment.save()
+        self.sign()
+        result=self.client.get('/api/consultations/?q=Synthetic').json()
+        self.assertEqual(result['count'],1)
+        self.assertNotIn('diagnosis',result['results'][0])
+        self.assertEqual(self.client.get('/api/appointments/?for_consultation=1').json()['results'], [])
