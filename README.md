@@ -1,0 +1,76 @@
+# Dija Hospital
+
+A new hospital management project for a general hospital in Nigeria, separate from the existing grains-store project. Built with Next.js 16, React 19, Django 5.2 and PostgreSQL 17. It starts with one branch and uses branch-owned records throughout so more branches can be added later.
+
+## Working first release
+
+- Staff sign-in with Django sessions, CSRF protection, a one-hour session lifetime and role-based API access.
+- Dashboard with actual database counts, today's appointments, recent patients and clinic activity.
+- Patient registration, generated hospital numbers, Nigerian mobile-number validation, next-of-kin capture and paginated search.
+- Appointments by department, check-in, cancellation and clinical completion.
+- Admissions with occupied-bed and duplicate-admission protection; doctor-authorised discharge.
+- Naira invoices and explicit confirmation of manual payment receipts. No payment gateway or insurance processing is connected.
+- A searchable directory of 33 clinical, diagnostic, operational and administrative departments.
+- Branch scoping and audit events for API reads, changes, sign-in and sign-out. The audit log records identifiers and actions, not copied patient names or clinical content.
+- A superuser-only Django administration console for configuring branches, departments and staff roles.
+
+No real patient data is included. Browser validation creates synthetic records and removes them afterwards.
+
+## Start in this cloud workspace
+
+```bash
+bash /workspace/hospital-management/scripts/setup.sh
+bash /workspace/hospital-management/scripts/start.sh
+```
+
+Setup is repeatable: it preserves the database, generates local secrets only if absent, installs locked dependencies and applies migrations. The cloud image is Debian trixie with Python 3.12 and Node 24. PostgreSQL runs as the workspace user, listening only on loopback. Its trust authentication is strictly for this isolated development machine. The database `dija_hospital` is separate from `elohim_grains`.
+
+The frontend uses port 3100 and proxies `/api/` to Django on port 8000. The service processes need to restart after cloud restoration. Logs and PID files are in `.local/`; secrets and generated credentials there are ignored by Git. Use existing checkout directories; cloud tasks already provide isolation, so do not create a Git worktree unless requested.
+
+The generated local administrator username is `dija-admin`. Its random password is saved in `.local/admin-login.json` with owner-only permissions. Retrieve it privately in your workspace; do not commit, share or paste that file into chat. It is a development account. To set a password of your choice:
+
+```bash
+cd /workspace/hospital-management/backend
+source ../scripts/runtime.sh
+../.venv/bin/python manage.py changepassword dija-admin
+```
+
+Django administration is served on the backend under `/admin/`. Create users there and assign each a **Staff profile** with a role and branch. Ordinary staff should not be superusers. The administration console is intentionally restricted to trusted superusers; staff work through the branch-scoped application. Available roles: administrator, receptionist, doctor, nurse, accountant, laboratory scientist and pharmacist. Laboratory/pharmacy roles currently see the overview and department directory; specialist workflows are not yet implemented. Registration is restricted to administrators, receptionists and nurses; doctors can read patient records. Accounts staff can see billing and a minimal patient selector without access to demographic records or admissions.
+
+Branch staff cannot override their assigned branch through API parameters. A trusted superuser can select an active branch through the API's `branch` query parameter; a branch-switching interface and cross-branch patient transfers are future work. Add another branch and its departments through administration when required.
+
+## Validation
+
+```bash
+cd /workspace/hospital-management/backend
+source ../scripts/runtime.sh
+../.venv/bin/python manage.py check
+../.venv/bin/python manage.py makemigrations --check --dry-run
+../.venv/bin/python manage.py test hospital --noinput
+
+cd ../frontend
+npm run build
+# Start services first; keep runtime variables from above for test cleanup.
+npx playwright test
+```
+
+The 12 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → completion, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
+
+## Department roadmap
+
+The department directory is broader than the working transaction modules. A department appearing in the directory does **not** mean its specialist functions are complete.
+
+| Area | Departments | Planned specialist workflows |
+| --- | --- | --- |
+| Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Encounters and clinical notes, vitals/triage, allergies, diagnosis coding, care plans, referrals, maternity records and discharge summaries |
+| Diagnostics & treatment | Laboratory, radiology, pharmacy, blood bank | Orders and results, specimen tracking, imaging/PACS integration, prescription validation, dispensing, batch/expiry stock and transfusion controls |
+| Operations | Theatre, medical records, ambulance, mortuary, nutrition, infection prevention, sterilisation, facilities | Procedure scheduling, transport, release approvals, dietary orders, surveillance, instrument tracking, equipment and housekeeping |
+| Administration | Accounts, NHIA/HMO, HR, procurement/stores, hospital administration, ICT | Receipt/reconciliation, partial payments/refunds, tariffs, authorisations/claims, rosters/payroll, stock/procurement, reporting and integrations |
+
+The current release is a development foundation, not a complete clinical electronic medical record or a production-certified hospital system. In particular, completing an appointment does not create a consultation note, and recording a payment does not move money.
+
+## Before using real hospital records
+
+Arrange hospital-specific clinical and access review, Nigeria Data Protection Act obligations, retention/consent policies and operational sign-off. Add HTTPS deployment, managed PostgreSQL with verified TLS, backups with restore testing, shared-cache login limits, stronger account controls/MFA, access monitoring, audit-log retention, incident handling and disaster recovery. Configure `DJANGO_DEBUG=false`, a deployment secret, allowed hosts, trusted HTTPS origins and `DB_SSLMODE=verify-full` with the database provider's CA. Development launch scripts are not production deployment scripts.
+
+The frontend and Django should share an HTTPS origin through a trusted reverse proxy. Keep Django administration separately restricted. No payment, messaging or external health-service credentials are currently required or configured.
