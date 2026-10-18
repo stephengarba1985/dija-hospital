@@ -190,6 +190,75 @@ class ConsultationAddendum(models.Model):
         ordering = ['created_at', 'pk']
 
 
+class LabTest(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    code = models.SlugField(max_length=30)
+    name = models.CharField(max_length=160)
+    specimen_type = models.CharField(max_length=100)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [models.UniqueConstraint(fields=['branch', 'code'], name='lab_test_branch_code')]
+
+    def __str__(self):
+        return f'{self.code} · {self.name} ({self.branch.code})'
+
+
+class LabOrder(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = 'requested', 'Requested'
+        COLLECTED = 'collected', 'Specimen collected'
+        REPORTED = 'reported', 'Reported'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT)
+    consultation = models.ForeignKey(Consultation, on_delete=models.PROTECT, related_name='lab_orders')
+    test = models.ForeignKey(LabTest, on_delete=models.PROTECT)
+    test_name = models.CharField(max_length=160)
+    specimen_type = models.CharField(max_length=100)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='lab_requests')
+    indication = models.TextField(max_length=2000)
+    priority = models.CharField(max_length=10, choices=[('routine', 'Routine'), ('urgent', 'Urgent')], default='routine')
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.REQUESTED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    specimen_id = models.CharField(max_length=100, blank=True)
+    collected_at = models.DateTimeField(null=True, blank=True)
+    collected_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='lab_collections')
+    cancellation_reason = models.TextField(blank=True, max_length=2000)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='cancelled_lab_orders')
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+
+    def clean(self):
+        if self.consultation_id and (self.consultation.branch_id != self.branch_id or self.consultation.patient_id != self.patient_id):
+            raise ValidationError('The laboratory order must match the consultation patient and branch.')
+        if self.test_id and self.test.branch_id != self.branch_id:
+            raise ValidationError('The laboratory test must belong to this branch.')
+
+
+class LabReport(models.Model):
+    order = models.OneToOneField(LabOrder, on_delete=models.PROTECT, related_name='report')
+    result_text = models.TextField(max_length=10000)
+    reference_info = models.TextField(blank=True, max_length=3000)
+    comments = models.TextField(blank=True, max_length=5000)
+    signed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    signed_at = models.DateTimeField(auto_now_add=True)
+
+
+class LabReportAddendum(models.Model):
+    report = models.ForeignKey(LabReport, on_delete=models.PROTECT, related_name='addenda')
+    note = models.TextField(max_length=10000)
+    signed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    signed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['signed_at', 'pk']
+
+
 class AuditEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, null=True)

@@ -10,8 +10,11 @@ const lastName = `UIValidation${Date.now()}`;
 test.afterAll(() => {
   // Remove only this test's exact synthetic patient and its dependent records.
   execFileSync(path.join(root, '.venv/bin/python'), ['manage.py', 'shell', '-c', `
-from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum
+from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum
 patients = Patient.objects.filter(first_name='Synthetic', last_name='${lastName}')
+LabReportAddendum.objects.filter(report__order__patient__in=patients).delete()
+LabReport.objects.filter(order__patient__in=patients).delete()
+LabOrder.objects.filter(patient__in=patients).delete()
 ConsultationAddendum.objects.filter(consultation__patient__in=patients).delete()
 Consultation.objects.filter(patient__in=patients).delete()
 Appointment.objects.filter(patient__in=patients).delete()
@@ -76,7 +79,47 @@ test('registration, appointments, admission, billing and mobile navigation', asy
   await dialog.getByRole('button', { name: 'Sign addendum', exact: true }).click();
   await expect(dialog.getByText('Synthetic correction recorded as an addendum', { exact: true })).toBeVisible();
   await expect(dialog.getByText('Synthetic assessment', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Request laboratory test', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Signed consultation *', { exact: true })).not.toHaveValue('');
+  await dialog.getByLabel('Laboratory test *', { exact: true }).selectOption({ label: 'Full blood count · Whole blood' });
+  await dialog.getByLabel('Clinical indication *', { exact: true }).fill('Synthetic test request for browser validation');
+  await dialog.getByRole('button', { name: 'Submit test request', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
+  await expect(row).toContainText('Requested');
+  await row.getByRole('button', { name: 'View request', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Record collection', exact: true }).click();
+  await dialog.getByLabel('Specimen label / identifier *', { exact: true }).fill('SYNTHETIC-UI-SAMPLE');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Confirm collection', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Enter results', exact: true }).click();
+  await dialog.getByLabel('Results (include values and units) *', { exact: true }).fill('Synthetic result for software testing only');
+  await dialog.getByLabel('Laboratory reference information', { exact: true }).fill('Synthetic reference text');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign laboratory report', exact: true }).click();
+  await expect(dialog.getByText('Synthetic result for software testing only', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add report addendum', exact: true }).click();
+  await dialog.getByLabel('Report addendum *', { exact: true }).fill('Synthetic report correction');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign report addendum', exact: true }).click();
+  await expect(dialog.getByText('Synthetic report correction', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Synthetic result for software testing only', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(row).toContainText('Reported');
+  await page.getByRole('navigation').getByRole('button', { name: 'Consultations', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
+  await row.getByRole('button', { name: 'View record', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'View patient lab requests', exact: true }).click();
+  await expect(page.getByLabel('Search laboratory requests', { exact: true })).not.toHaveValue('');
+  row = page.getByRole('row').filter({ hasText: lastName });
+  await expect(row).toContainText('Reported');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => page.locator('.sidebar').evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(1);
+  if (await page.getByRole('button', { name: 'Dismiss notification' }).isVisible()) await page.getByRole('button', { name: 'Dismiss notification' }).click();
+  await page.screenshot({ path: path.join(root, '.local/dija-laboratory-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('navigation').getByRole('button', { name: 'Appointments', exact: true }).click();
   row = page.getByRole('row').filter({ hasText: lastName });
   await expect(row).toContainText('completed');

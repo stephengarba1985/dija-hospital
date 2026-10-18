@@ -18,6 +18,7 @@ from django.views.decorators.http import require_http_methods
 from .models import Branch, Department, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum
 
 ROLES = {
+    'laboratory': {'administrator', 'doctor', 'nurse', 'laboratory'},
     'consultations': {'administrator', 'doctor', 'nurse'},
     'patients': {'administrator', 'receptionist', 'doctor', 'nurse'},
     'appointments': {'administrator', 'receptionist', 'doctor', 'nurse'},
@@ -324,7 +325,7 @@ def invoice_paid(request, pk):
 
 @endpoint(['GET'])
 def patient_options(request):
-    if role_for(request.user) not in set().union(*ROLES.values()):
+    if role_for(request.user) not in ROLES['patients'] | ROLES['admissions'] | ROLES['invoices']:
         return JsonResponse({'error': 'Access denied.'}, status=403)
     query = request.GET.get('q', '')[:120]
     records = scoped(Patient, request)

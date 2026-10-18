@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import Group
+from hospital.lab_catalogue import seed_tests
 from hospital.models import Branch, Department, StaffProfile
 
 DEPARTMENTS = [
@@ -46,6 +47,7 @@ class Command(BaseCommand):
         branch, _ = Branch.objects.get_or_create(code='main', defaults={'name': 'Dija Hospital · Main branch'})
         for name, code, category, description in DEPARTMENTS:
             Department.objects.get_or_create(branch=branch, code=code, defaults={'name': name, 'category': category, 'description': description})
+        seed_tests(branch)
         for role, label in StaffProfile.Role.choices:
             Group.objects.get_or_create(name=label)
         self.stdout.write(self.style.SUCCESS(f'Dija Hospital: {Department.objects.filter(branch=branch).count()} departments configured.'))
