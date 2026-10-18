@@ -10,8 +10,14 @@ const lastName = `UIValidation${Date.now()}`;
 test.afterAll(() => {
   // Remove only this test's exact synthetic patient and its dependent records.
   execFileSync(path.join(root, '.venv/bin/python'), ['manage.py', 'shell', '-c', `
-from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum
+from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement
+from django.db.models import Q
 patients = Patient.objects.filter(first_name='Synthetic', last_name='${lastName}')
+StockMovement.objects.filter(Q(prescription__patient__in=patients) | Q(batch__medicine__code='ui-${lastName.toLowerCase()}')).delete()
+Dispense.objects.filter(prescription__patient__in=patients).delete()
+Prescription.objects.filter(patient__in=patients).delete()
+MedicineBatch.objects.filter(medicine__code='ui-${lastName.toLowerCase()}').delete()
+Medicine.objects.filter(code='ui-${lastName.toLowerCase()}').delete()
 LabReportAddendum.objects.filter(report__order__patient__in=patients).delete()
 LabReport.objects.filter(order__patient__in=patients).delete()
 LabOrder.objects.filter(patient__in=patients).delete()
@@ -119,6 +125,69 @@ test('registration, appointments, admission, billing and mobile navigation', asy
   await expect.poll(() => page.locator('.sidebar').evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(1);
   if (await page.getByRole('button', { name: 'Dismiss notification' }).isVisible()) await page.getByRole('button', { name: 'Dismiss notification' }).click();
   await page.screenshot({ path: path.join(root, '.local/dija-laboratory-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole('navigation').getByRole('button', { name: 'Pharmacy', exact: true }).click();
+  await page.getByRole('button', { name: 'Add medicine', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Medicine code *', { exact: true }).fill('ui-'+lastName.toLowerCase());
+  await dialog.getByLabel('Medicine name *', { exact: true }).fill('Synthetic training medicine '+lastName);
+  await dialog.getByLabel('Strength *', { exact: true }).fill('Dummy strength');
+  await dialog.getByLabel('Formulation *', { exact: true }).fill('Dummy formulation');
+  await dialog.getByLabel('Dispensing unit *', { exact: true }).fill('units');
+  await dialog.getByLabel('Low-stock threshold *', { exact: true }).fill('5');
+  await dialog.getByRole('button', { name: 'Save medicine', exact: true }).click();
+  await page.getByRole('button', { name: 'Receive stock', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  let medicineOption = dialog.getByLabel('Prescription or stock medicine *', { exact: true }).locator('option').filter({ hasText: lastName });
+  await expect(medicineOption).toHaveCount(1);
+  await dialog.getByLabel('Prescription or stock medicine *', { exact: true }).selectOption(await medicineOption.getAttribute('value'));
+  await dialog.getByLabel('Batch number *', { exact: true }).fill('SYNTHETIC-UI-BATCH');
+  await dialog.getByLabel('Expiry date *', { exact: true }).fill(new Date(Date.now()+365*86400000).toISOString().slice(0,10));
+  await dialog.getByLabel('Quantity received *', { exact: true }).fill('20');
+  await dialog.getByLabel('Receipt reference *', { exact: true }).fill('UI-'+lastName);
+  await dialog.getByRole('button', { name: 'Record stock receipt', exact: true }).click();
+  await expect(page.getByRole('row').filter({ hasText: lastName })).toContainText('20 / 20 units');
+  await page.getByRole('navigation').getByRole('button', { name: 'Consultations', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: lastName }).getByRole('button', { name: 'View record', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Prescribe medicine', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Prescription consultation *', { exact: true })).not.toHaveValue('');
+  medicineOption = dialog.getByLabel('Prescription or stock medicine *', { exact: true }).locator('option').filter({ hasText: lastName });
+  await expect(medicineOption).toHaveCount(1);
+  await dialog.getByLabel('Prescription or stock medicine *', { exact: true }).selectOption(await medicineOption.getAttribute('value'));
+  for (const label of ['Dose *','Route *','Frequency *','Duration *']) await dialog.getByLabel(label, { exact: true }).fill('Synthetic software test');
+  await dialog.getByLabel('Total quantity (dispensing units) *', { exact: true }).fill('10');
+  await dialog.getByLabel('Patient instructions *', { exact: true }).fill('Synthetic software test only');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign prescription', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: lastName }).getByRole('button', { name: 'View prescription', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  for (const amount of ['4','6']) {
+    await dialog.getByRole('button', { name: 'Dispense medicine', exact: true }).click();
+    const batchOption = dialog.getByLabel('Dispensing batch *', { exact: true }).locator('option').filter({ hasText: 'SYNTHETIC-UI-BATCH' });
+    await dialog.getByLabel('Dispensing batch *', { exact: true }).selectOption(await batchOption.getAttribute('value'));
+    await dialog.getByLabel('Quantity to dispense *', { exact: true }).fill(amount);
+    await dialog.getByRole('checkbox').check();
+    await dialog.getByRole('button', { name: 'Confirm dispensing', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: 'Dispensing history', exact: true })).toBeVisible();
+  }
+  await expect(dialog.getByText('Dispensed', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Stock batches', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
+  await expect(row).toContainText('10 / 20 units');
+  await row.getByRole('button', { name: 'Write off', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Quantity to remove *', { exact: true }).fill('2');
+  await dialog.getByLabel('Write-off reason *', { exact: true }).fill('Synthetic damaged stock');
+  await dialog.getByRole('button', { name: 'Confirm write-off', exact: true }).click();
+  await expect(page.getByRole('row').filter({ hasText: lastName })).toContainText('8 / 20 units');
+  await page.getByRole('button', { name: 'Stock history', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'write off', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect.poll(() => page.locator('.sidebar').evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: path.join(root, '.local/dija-pharmacy-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('navigation').getByRole('button', { name: 'Appointments', exact: true }).click();
   row = page.getByRole('row').filter({ hasText: lastName });

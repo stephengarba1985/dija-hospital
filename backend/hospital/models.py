@@ -259,6 +259,116 @@ class LabReportAddendum(models.Model):
         ordering = ['signed_at', 'pk']
 
 
+class Medicine(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    code = models.SlugField(max_length=40)
+    name = models.CharField(max_length=160)
+    strength = models.CharField(max_length=80)
+    form = models.CharField(max_length=80)
+    dispensing_unit = models.CharField(max_length=30)
+    low_stock_threshold = models.PositiveIntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name', 'strength', 'pk']
+        constraints = [models.UniqueConstraint(fields=['branch', 'code'], name='medicine_branch_code')]
+
+    def __str__(self):
+        return f'{self.code} · {self.name} {self.strength} ({self.branch.code})'
+
+    def clean(self):
+        if self.pk:
+            old = Medicine.objects.get(pk=self.pk)
+            identity = ['branch_id', 'code', 'name', 'strength', 'form', 'dispensing_unit']
+            if any(getattr(old, field) != getattr(self, field) for field in identity) and (self.batches.exists() or self.prescription_set.exists()):
+                raise ValidationError('Medicine identity cannot change after stock or prescribing. Deactivate it and create a separate catalogue entry.')
+
+
+class MedicineBatch(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    medicine = models.ForeignKey(Medicine, on_delete=models.PROTECT, related_name='batches')
+    batch_number = models.CharField(max_length=100)
+    expiry_date = models.DateField()
+    quantity_received = models.PositiveIntegerField(default=0)
+    quantity_remaining = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['expiry_date', 'pk']
+        constraints = [
+            models.UniqueConstraint(fields=['medicine', 'batch_number'], name='medicine_batch_number'),
+            models.CheckConstraint(condition=Q(quantity_remaining__gte=0) & Q(quantity_remaining__lte=models.F('quantity_received')), name='valid_batch_balance'),
+        ]
+
+
+class Prescription(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT)
+    consultation = models.ForeignKey(Consultation, on_delete=models.PROTECT, related_name='prescriptions')
+    medicine = models.ForeignKey(Medicine, on_delete=models.PROTECT)
+    medicine_name = models.CharField(max_length=160)
+    strength = models.CharField(max_length=80)
+    form = models.CharField(max_length=80)
+    dispensing_unit = models.CharField(max_length=30)
+    dose = models.CharField(max_length=200)
+    route = models.CharField(max_length=100)
+    frequency = models.CharField(max_length=200)
+    duration = models.CharField(max_length=200)
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1), MaxValueValidator(1000000)])
+    instructions = models.TextField(max_length=5000)
+    allergy_status = models.CharField(max_length=12, choices=[('unknown', 'Not assessed / unknown'), ('none', 'No known allergies'), ('known', 'Known allergies')])
+    allergies = models.TextField(blank=True, max_length=2000)
+    prescribed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='prescriptions_written')
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=12, choices=[('active', 'Active'), ('completed', 'Dispensed'), ('cancelled', 'Cancelled')], default='active')
+    cancellation_reason = models.TextField(blank=True, max_length=2000)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='prescriptions_cancelled')
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+        constraints = [models.CheckConstraint(condition=Q(quantity__gt=0), name='positive_prescription_quantity')]
+
+    def clean(self):
+        if self.consultation_id and (self.consultation.branch_id != self.branch_id or self.consultation.patient_id != self.patient_id):
+            raise ValidationError('Prescription patient and branch must match the consultation.')
+        if self.medicine_id and self.medicine.branch_id != self.branch_id:
+            raise ValidationError('Choose a medicine in the current branch.')
+
+
+class Dispense(models.Model):
+    prescription = models.ForeignKey(Prescription, on_delete=models.PROTECT, related_name='dispenses')
+    batch = models.ForeignKey(MedicineBatch, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    pharmacist = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    request_id = models.UUIDField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        constraints = [models.CheckConstraint(condition=Q(quantity__gt=0), name='positive_dispense_quantity')]
+
+
+class StockMovement(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    batch = models.ForeignKey(MedicineBatch, on_delete=models.PROTECT)
+    prescription = models.ForeignKey(Prescription, on_delete=models.PROTECT, null=True, blank=True)
+    kind = models.CharField(max_length=12, choices=[('receipt', 'Receipt'), ('dispense', 'Dispense'), ('write_off', 'Write-off')])
+    quantity = models.IntegerField()
+    balance_after = models.PositiveIntegerField()
+    reference = models.CharField(max_length=100, blank=True)
+    request_id = models.UUIDField(unique=True, null=True, blank=True)
+    note = models.CharField(max_length=500, blank=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+        constraints = [
+            models.UniqueConstraint(fields=['branch', 'reference'], condition=Q(kind='receipt'), name='unique_stock_receipt_reference'),
+            models.CheckConstraint(condition=(Q(kind='receipt') & Q(quantity__gt=0)) | (Q(kind__in=['dispense', 'write_off']) & Q(quantity__lt=0)), name='valid_stock_movement_direction'),
+        ]
+
+
 class AuditEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, null=True)

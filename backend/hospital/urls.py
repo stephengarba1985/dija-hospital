@@ -1,7 +1,16 @@
 from django.urls import path
-from . import views, lab_views
+from . import views, lab_views, pharmacy_views
 
 urlpatterns = [
+    path('pharmacy/', pharmacy_views.prescriptions),
+    path('pharmacy/medicines/', pharmacy_views.medicines),
+    path('pharmacy/batches/', pharmacy_views.batches),
+    path('pharmacy/receive/', pharmacy_views.receive_stock),
+    path('pharmacy/movements/', pharmacy_views.movements),
+    path('pharmacy/batches/<int:pk>/write-off/', pharmacy_views.write_off),
+    path('pharmacy/<int:pk>/', pharmacy_views.prescription_detail),
+    path('pharmacy/<int:pk>/dispense/', pharmacy_views.dispense),
+    path('pharmacy/<int:pk>/cancel/', pharmacy_views.cancel_prescription),
     path('laboratory/', lab_views.orders),
     path('laboratory/tests/', lab_views.catalogue),
     path('laboratory/<int:pk>/', lab_views.detail),

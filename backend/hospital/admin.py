@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Branch, Department, StaffProfile, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum, LabTest, LabOrder, LabReport, LabReportAddendum
+from .models import Branch, Department, StaffProfile, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum, LabTest, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement
 
 @admin.register(Patient)
 class PatientAdmin(admin.ModelAdmin):
@@ -24,7 +24,7 @@ admin.site.has_permission = lambda request: request.user.is_active and request.u
 admin.site.register([Branch, Department, Appointment, Admission, Invoice])
 
 
-@admin.register(Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum)
+@admin.register(Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, MedicineBatch, Prescription, Dispense, StockMovement)
 class SignedClinicalRecordAdmin(admin.ModelAdmin):
     def has_add_permission(self, request): return False
     def has_change_permission(self, request, obj=None): return False
@@ -34,5 +34,12 @@ class SignedClinicalRecordAdmin(admin.ModelAdmin):
 @admin.register(LabTest)
 class LabTestAdmin(admin.ModelAdmin):
     list_display = ['code', 'name', 'specimen_type', 'branch', 'active']
+    list_filter = ['branch', 'active']
+    search_fields = ['code', 'name']
+
+
+@admin.register(Medicine)
+class MedicineAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'strength', 'form', 'dispensing_unit', 'branch', 'active']
     list_filter = ['branch', 'active']
     search_fields = ['code', 'name']

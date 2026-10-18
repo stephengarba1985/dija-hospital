@@ -13,7 +13,7 @@ const TEXTS = [['symptoms', 'Symptoms & history', true], ['examination', 'Examin
   ['follow_up_instructions', 'Follow-up instructions', false]];
 const dateTime = v => new Date(v).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' });
 
-export default function ConsultationWorkspace({ api, user, Modal, notify, onOpenLaboratory }) {
+export default function ConsultationWorkspace({ api, user, Modal, notify, onOpenLaboratory, onOpenPharmacy }) {
   const apiRef = useRef(api); apiRef.current = api;
   const [records, setRecords] = useState([]);
   const [count, setCount] = useState(0);
@@ -82,7 +82,7 @@ export default function ConsultationWorkspace({ api, user, Modal, notify, onOpen
         {TEXTS.map(([key,label])=><section key={key}><h3>{label}</h3><p>{record[key] || 'Not recorded'}</p></section>)}
         <h3>Follow-up date</h3><p>{record.follow_up_date || 'Not scheduled'} · This does not book an appointment.</p>
         <h3>Clinical addenda</h3>{!record.addenda.length && <p>No addenda.</p>}{record.addenda.map(a=><section className="clinical-addendum" key={a.id}><strong>{a.clinician} · {dateTime(a.created_at)} WAT</strong><p>{a.note}</p></section>)}
-        <div className="form-actions lab-actions"><button className="secondary" onClick={close}>Close</button><button className="secondary" onClick={()=>onOpenLaboratory(record, false)}>View patient lab requests</button>{canSign && <button className="primary" onClick={()=>onOpenLaboratory(record, true)}>Request laboratory test</button>}{canSign && <button className="primary" onClick={()=>{setError('');setMode('addendum');}}>Add addendum</button>}</div>
+        <div className="form-actions lab-actions"><button className="secondary" onClick={close}>Close</button><button className="secondary" onClick={()=>onOpenLaboratory(record, false)}>View patient lab requests</button><button className="secondary" onClick={()=>onOpenPharmacy(record, false)}>View patient prescriptions</button>{canSign && <button className="primary" onClick={()=>onOpenPharmacy(record, true)}>Prescribe medicine</button>}{canSign && <button className="primary" onClick={()=>onOpenLaboratory(record, true)}>Request laboratory test</button>}{canSign && <button className="primary" onClick={()=>{setError('');setMode('addendum');}}>Add addendum</button>}</div>
       </div> : <form onSubmit={save}>
         {mode==='new' ? <><p className="form-intro">Sign a record for a checked-in appointment. Saving completes that appointment. These notes cannot be overwritten; use an addendum for corrections.</p>
           <label>Checked-in appointment *<select aria-label="Checked-in appointment *" name="appointment_id" defaultValue="" required><option value="" disabled>Select a checked-in patient</option>{appointments.map(a=><option value={a.id} key={a.id}>{a.patient_name} · {a.hospital_number} · {a.department} · {dateTime(a.scheduled_at)}</option>)}</select></label>

@@ -12,6 +12,7 @@ A new hospital management project for a general hospital in Nigeria, separate fr
 - Admissions with occupied-bed and duplicate-admission protection; doctor-authorised discharge.
 - Naira invoices and explicit confirmation of manual payment receipts. No payment gateway or insurance processing is connected.
 - Laboratory requests from signed consultations, specimen labels and collection, signed free-text reports and append-only report addenda.
+- Signed prescriptions, medicine catalogue, batch receipts, expiry blocking, partial dispensing and an append-only stock ledger.
 - A searchable directory of 33 clinical, diagnostic, operational and administrative departments.
 - Branch scoping and audit events for API reads, changes, sign-in and sign-out. The audit log records identifiers and actions, not copied patient names or clinical content.
 - A superuser-only Django administration console for configuring branches, departments and staff roles.
@@ -39,7 +40,7 @@ source ../scripts/runtime.sh
 ../.venv/bin/python manage.py changepassword dija-admin
 ```
 
-Django administration is served on the backend under `/admin/`. Create users there and assign each a **Staff profile** with a role and branch. Ordinary staff should not be superusers. The administration console is intentionally restricted to trusted superusers; staff work through the branch-scoped application. Available roles: administrator, receptionist, doctor, nurse, accountant, laboratory scientist and pharmacist. Laboratory scientists can process requests and sign laboratory reports, but cannot read consultation notes or register patients. Pharmacists currently see the overview and department directory; dispensing is not yet implemented. Registration is restricted to administrators, receptionists and nurses; doctors can read patient records. Accounts staff can see billing and a minimal patient selector without access to demographic records or admissions.
+Django administration is served on the backend under `/admin/`. Create users there and assign each a **Staff profile** with a role and branch. Ordinary staff should not be superusers. The administration console is intentionally restricted to trusted superusers; staff work through the branch-scoped application. Available roles: administrator, receptionist, doctor, nurse, accountant, laboratory scientist and pharmacist. Laboratory scientists can process requests and sign laboratory reports, but cannot read consultation notes or register patients. Pharmacists can maintain the medicine catalogue, receive batches, dispense prescriptions and record stock write-offs. They see the patient identifier and allergy snapshot needed for dispensing, without access to broader consultation or demographic records. Registration is restricted to administrators, receptionists and nurses; doctors can read patient records. Accounts staff can see billing and a minimal patient selector without access to demographic records or admissions.
 
 Branch staff cannot override their assigned branch through API parameters. A trusted superuser can select an active branch through the API's `branch` query parameter; a branch-switching interface and cross-branch patient transfers are future work. Add another branch and its departments through administration when required.
 
@@ -58,7 +59,7 @@ npm run build
 npx playwright test
 ```
 
-The 30 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → signed consultation → clinical addendum → laboratory request → specimen collection → signed result → report addendum, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
+The 45 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → signed consultation → clinical addendum → laboratory request → specimen collection → signed result → report addendum, medicine creation → batch receipt → prescription → partial/full dispensing → stock write-off, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
 
 ## Department roadmap
 
@@ -67,7 +68,7 @@ The department directory is broader than the working transaction modules. A depa
 | Area | Departments | Planned specialist workflows |
 | --- | --- | --- |
 | Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Triage workflow, coded diagnoses, care plans, referrals, maternity records and discharge summaries |
-| Diagnostics & treatment | Laboratory, radiology, pharmacy, blood bank | Structured laboratory analytes, analyser integration and critical-result escalation; imaging/PACS integration; prescription validation, dispensing, batch/expiry stock and transfusion controls |
+| Diagnostics & treatment | Laboratory, radiology, pharmacy, blood bank | Structured laboratory analytes, analyser integration and critical-result escalation; imaging/PACS integration; automated prescription decision support, controlled-drug workflows, stock transfers and transfusion controls |
 | Operations | Theatre, medical records, ambulance, mortuary, nutrition, infection prevention, sterilisation, facilities | Procedure scheduling, transport, release approvals, dietary orders, surveillance, instrument tracking, equipment and housekeeping |
 | Administration | Accounts, NHIA/HMO, HR, procurement/stores, hospital administration, ICT | Receipt/reconciliation, partial payments/refunds, tariffs, authorisations/claims, rosters/payroll, stock/procurement, reporting and integrations |
 
@@ -112,3 +113,26 @@ The hospital owner can configure **Lab tests** through Django administration. Fi
 Laboratory scientists cannot create test requests or view broader patient/consultation records. Doctors cannot collect specimens or sign laboratory reports; nurses have read access. Administrators can exercise the full workflow for development and testing. Staff are assigned to their own branches through Staff profiles. Read access and workflow actions are audited without copying result text into audit events.
 
 This module records manually entered reports. It does not generate test values, reference ranges or diagnoses, interface with laboratory instruments, issue invoices, send external orders, deliver critical-result alerts, track clinician acknowledgement, or automatically amend a treatment plan. These capabilities and laboratory-specific clinical validation remain separate work. Continue with synthetic data only.
+
+## Prescriptions and pharmacy
+
+Update existing WSL installations using `git pull --ff-only` and `python manage.py migrate` as above; no dependencies or existing patient accounts are replaced. Restart both servers and sign out/sign in to load the Pharmacy menu. No medicine names, doses, stock quantities or prices are seeded.
+
+### First sample workflow
+
+1. As administrator or pharmacist, open **Pharmacy → Add medicine**. Enter a separate code, name, strength, formulation and smallest dispensing unit for each approved product. For software testing use a clearly synthetic medicine, dummy strength/formulation and `units`. Do not use a real regimen as sample data.
+2. Select **Receive stock**, choose the medicine and enter its batch label, exact expiry date, quantity in dispensing units and a unique receipt reference for this entry. Subsequent deliveries can top up the same batch using a new receipt reference, provided the expiry date matches. Reusing a receipt reference cannot add stock again.
+3. As a doctor or administrator, open **Consultations → View record → Prescribe medicine**, or **Pharmacy → New prescription** and search for a signed consultation. Enter one medicine, dose, route, frequency, duration, total whole-number quantity in dispensing units, and patient instructions. Review the patient and allergy information before signing. No dosing or quantity calculation is performed.
+4. As pharmacist or administrator, open **Pharmacy → View prescription → Dispense medicine**. Verify the current patient, allergies, prescription and medicine; choose a batch and enter the quantity actually dispensed. The eligible batch list is ordered by earliest expiry, and excludes expired/expiring-today or inactive products. Each submission deducts stock and appends history atomically.
+5. Dispense part of the quantity now and the remainder later, or split across batches with separate entries. The system blocks quantities above the unfilled prescription or available batch balance, including when two requests compete for the same stock. Repeated submissions with the same dispensing-action identifier do not deduct stock twice.
+6. Review **Medicines**, **Stock batches** and **Stock history**. Medicines show available unexpired stock and configured low-stock flags. Expired stock is retained for traceability but cannot be dispensed. A reasoned **Write off** action removes damaged/unusable stock and preserves the signed stock movement; retries of the same action cannot remove stock twice.
+
+### Roles, corrections and limits
+
+Doctors/administrators can sign prescriptions and cancel an active prescription's unfilled quantity with a reason. Pharmacists/administrators can receive, dispense and write off stock. Nurses have prescription read access. Reception, accounts and laboratory roles cannot read prescriptions. All records are scoped to staff branches.
+
+Prescribed product identity and the consultation allergy record are snapshots. Signed prescriptions, dispensing and stock movements have no edit/delete API and are read-only in administration. Correct a prescription by cancelling its unfilled quantity and issuing a new one. Prior dispensing remains in history and cancellation does not put medicine back into stock. The system prevents changing a medicine's identity in administration after stock or prescribing; create a new entry and deactivate the old product instead. Active status and low-stock threshold can still be updated there.
+
+The allergy snapshot may not reflect a later clinical addendum or newly discovered allergy. Both prescriber and dispenser must verify current information with the patient and clinical team; there is no automated allergy/interaction check. The confirmation records a staff workflow, not an independently verified clinical assessment.
+
+Only whole-number stock quantities are supported, in the declared dispensing unit. No pack conversion, substitution, dose recommendation, renal/weight calculation, automated prescription expiry, medication-administration record, controlled-drug register, barcode integration, supplier purchasing, quarantine workflow, return/refund, cross-branch transfer or automatic invoice generation is implemented. Test with synthetic data; hospital-specific pharmacy validation and deployment controls remain required before live use.

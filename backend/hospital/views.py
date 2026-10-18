@@ -18,6 +18,7 @@ from django.views.decorators.http import require_http_methods
 from .models import Branch, Department, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum
 
 ROLES = {
+    'pharmacy': {'administrator', 'doctor', 'nurse', 'pharmacist'},
     'laboratory': {'administrator', 'doctor', 'nurse', 'laboratory'},
     'consultations': {'administrator', 'doctor', 'nurse'},
     'patients': {'administrator', 'receptionist', 'doctor', 'nurse'},
@@ -68,7 +69,7 @@ def endpoint(methods, resource=None):
                 message = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Check the supplied fields and try again.'
                 return JsonResponse({'error': message}, status=400)
             except IntegrityError:
-                return JsonResponse({'error': 'This record conflicts with an existing appointment, admission, or occupied bed.'}, status=409)
+                return JsonResponse({'error': 'This record conflicts with an existing record. Refresh and try again.'}, status=409)
         return wrapped
     return decorate
 
