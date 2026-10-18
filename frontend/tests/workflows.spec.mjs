@@ -170,7 +170,7 @@ test('registration, appointments, admission, billing and mobile navigation', asy
   await page.screenshot({ path: path.join(root, '.local/dija-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.screenshot({ path: path.join(root, '.local/dija-dashboard.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Dija Administrator administrator' }).click();
+  await page.locator('.topbar').getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sign in to workspace' })).toBeVisible();
   expect(errors).toEqual([]);
 });

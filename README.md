@@ -27,6 +27,8 @@ bash /workspace/hospital-management/scripts/start.sh
 
 Setup is repeatable: it preserves the database, generates local secrets only if absent, installs locked dependencies and applies migrations. The cloud image is Debian trixie with Python 3.12 and Node 24. PostgreSQL runs as the workspace user, listening only on loopback. Its trust authentication is strictly for this isolated development machine. The database `dija_hospital` is separate from `elohim_grains`.
 
+Your name and a labelled **Sign out** button appear in the top-right header and stay reachable while scrolling. The sidebar also scrolls on short screens, with account controls at its bottom.
+
 The frontend uses port 3100 and proxies `/api/` to Django on port 8000. The service processes need to restart after cloud restoration. Logs and PID files are in `.local/`; secrets and generated credentials there are ignored by Git. Use existing checkout directories; cloud tasks already provide isolation, so do not create a Git worktree unless requested.
 
 The generated local administrator username is `dija-admin`. Its random password is saved in `.local/admin-login.json` with owner-only permissions. Retrieve it privately in your workspace; do not commit, share or paste that file into chat. It is a development account. To set a password of your choice:
