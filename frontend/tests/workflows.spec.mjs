@@ -10,9 +10,12 @@ const lastName = `UIValidation${Date.now()}`;
 test.afterAll(() => {
   // Remove only this test's exact synthetic patient and its dependent records.
   execFileSync(path.join(root, '.venv/bin/python'), ['manage.py', 'shell', '-c', `
-from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement
+from hospital.models import Patient, Appointment, Admission, Invoice, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement, InpatientRecord, MedicationAdministration, InpatientAddendum
 from django.db.models import Q
 patients = Patient.objects.filter(first_name='Synthetic', last_name='${lastName}')
+InpatientAddendum.objects.filter(Q(care_record__admission__patient__in=patients)|Q(medication_record__admission__patient__in=patients)).delete()
+MedicationAdministration.objects.filter(admission__patient__in=patients).delete()
+InpatientRecord.objects.filter(admission__patient__in=patients).delete()
 StockMovement.objects.filter(Q(prescription__patient__in=patients) | Q(batch__medicine__code='ui-${lastName.toLowerCase()}')).delete()
 Dispense.objects.filter(prescription__patient__in=patients).delete()
 Prescription.objects.filter(patient__in=patients).delete()
@@ -203,6 +206,74 @@ test('registration, appointments, admission, billing and mobile navigation', asy
   await dialog.getByRole('button', { name: 'Admit patient', exact: true }).click();
   row = page.getByRole('row').filter({ hasText: lastName });
   await expect(row).toContainText('Admitted');
+  await row.getByRole('button', { name: 'Open care record', exact: true }).click();
+  await page.getByRole('button', { name: 'Record observation', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Temperature (°C)', { exact: true }).fill('36.7');
+  await dialog.getByLabel('Pulse (beats/min)', { exact: true }).fill('75');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByRole('img', { name: 'Temperature (°C) chart', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Add dated correction', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Correction / additional context *', { exact: true }).fill('Synthetic observation context correction');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText('Synthetic observation context correction', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Nursing notes', exact: true }).click();
+  await page.getByRole('button', { name: 'Add nursing note', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Nursing note *', { exact: true }).fill('Synthetic bedside note');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText('Synthetic bedside note', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Care plans', exact: true }).click();
+  await page.getByRole('button', { name: 'Create care plan', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Care plan summary *', { exact: true }).fill('Synthetic care plan');
+  await dialog.getByLabel('Care goals *', { exact: true }).fill('Synthetic care goal');
+  await dialog.getByLabel('Planned interventions *', { exact: true }).fill('Synthetic care intervention');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText('Synthetic care intervention', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Ward rounds', exact: true }).click();
+  await page.getByRole('button', { name: 'Record ward round', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Ward-round assessment and plan *', { exact: true }).fill('Synthetic ward-round review');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText('Synthetic ward-round review', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Medication record', exact: true }).click();
+  await page.getByRole('button', { name: 'Record medication', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  let rxOption = dialog.getByLabel('Administration prescription *', { exact: true }).locator('option').filter({ hasText: lastName });
+  await expect(rxOption).toHaveCount(1);
+  await dialog.getByLabel('Administration prescription *', { exact: true }).selectOption(await rxOption.getAttribute('value'));
+  await dialog.getByLabel('Administration outcome *', { exact: true }).selectOption('given');
+  const supplyOption = dialog.getByLabel('Administration supply *', { exact: true }).locator('option').filter({ hasText: 'SYNTHETIC-UI-BATCH' }).first();
+  await dialog.getByLabel('Administration supply *', { exact: true }).selectOption(await supplyOption.getAttribute('value'));
+  await dialog.getByLabel('Actual dose given *', { exact: true }).fill('Synthetic documented dose');
+  await dialog.getByLabel('Quantity used (dispensing units) *', { exact: true }).fill('0.5');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText(/Quantity used: 0.500 units/)).toBeVisible();
+  await page.getByRole('button', { name: 'Record medication', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  rxOption = dialog.getByLabel('Administration prescription *', { exact: true }).locator('option').filter({ hasText: lastName });
+  await expect(rxOption).toHaveCount(1);
+  await dialog.getByLabel('Administration prescription *', { exact: true }).selectOption(await rxOption.getAttribute('value'));
+  await dialog.getByLabel('Administration outcome *', { exact: true }).selectOption('refused');
+  await dialog.getByLabel('Reason not given *', { exact: true }).fill('Synthetic refusal documentation');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Sign inpatient record', exact: true }).click();
+  await expect(page.getByText('Reason / context: Synthetic refusal documentation', { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect.poll(() => page.locator('.sidebar').evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: path.join(root, '.local/dija-nursing-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole('navigation').getByRole('button', { name: 'Admissions & wards', exact: true }).click();
+  row = page.getByRole('row').filter({ hasText: lastName });
   await row.getByRole('button', { name: 'Discharge', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm discharge' }).click();
   await expect(row).toContainText('Discharged');

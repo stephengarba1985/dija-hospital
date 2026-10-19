@@ -13,6 +13,7 @@ A new hospital management project for a general hospital in Nigeria, separate fr
 - Naira invoices and explicit confirmation of manual payment receipts. No payment gateway or insurance processing is connected.
 - Laboratory requests from signed consultations, specimen labels and collection, signed free-text reports and append-only report addenda.
 - Signed prescriptions, medicine catalogue, batch receipts, expiry blocking, partial dispensing and an append-only stock ledger.
+- Admission-linked observation charts, signed nursing notes, narrative care plans, ward rounds and medication administration records with dated addenda.
 - A searchable directory of 33 clinical, diagnostic, operational and administrative departments.
 - Branch scoping and audit events for API reads, changes, sign-in and sign-out. The audit log records identifiers and actions, not copied patient names or clinical content.
 - A superuser-only Django administration console for configuring branches, departments and staff roles.
@@ -59,7 +60,7 @@ npm run build
 npx playwright test
 ```
 
-The 45 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → signed consultation → clinical addendum → laboratory request → specimen collection → signed result → report addendum, medicine creation → batch receipt → prescription → partial/full dispensing → stock write-off, admission → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
+The 58 backend tests cover login/CSRF, staff access, registration, branch boundaries, appointments, admissions, billing and audit events. Browser tests exercise registration → appointment → check-in → signed consultation → clinical addendum → laboratory request → specimen collection → signed result → report addendum, medicine creation → batch receipt → prescription → partial/full dispensing → stock write-off, admission → observation chart → nursing note → care plan → ward round → given/refused medication records → discharge, invoice → payment, the department directory, mobile layout and sign-out. Chromium is used from `/usr/bin/chromium`; set `CHROMIUM_PATH` if different. Browser tests read only the private local development credentials. Do not run them against real patient databases.
 
 ## Department roadmap
 
@@ -67,7 +68,7 @@ The department directory is broader than the working transaction modules. A depa
 
 | Area | Departments | Planned specialist workflows |
 | --- | --- | --- |
-| Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Triage workflow, coded diagnoses, care plans, referrals, maternity records and discharge summaries |
+| Clinical care | Outpatient, emergency, internal medicine, surgery, obstetrics/gynaecology, paediatrics, ICU, orthopaedics, eye, dental, ENT, mental health, nursing, physiotherapy, community health | Triage workflow, coded diagnoses, care-plan task management, referrals, maternity records and discharge summaries |
 | Diagnostics & treatment | Laboratory, radiology, pharmacy, blood bank | Structured laboratory analytes, analyser integration and critical-result escalation; imaging/PACS integration; automated prescription decision support, controlled-drug workflows, stock transfers and transfusion controls |
 | Operations | Theatre, medical records, ambulance, mortuary, nutrition, infection prevention, sterilisation, facilities | Procedure scheduling, transport, release approvals, dietary orders, surveillance, instrument tracking, equipment and housekeeping |
 | Administration | Accounts, NHIA/HMO, HR, procurement/stores, hospital administration, ICT | Receipt/reconciliation, partial payments/refunds, tariffs, authorisations/claims, rosters/payroll, stock/procurement, reporting and integrations |
@@ -135,4 +136,27 @@ Prescribed product identity and the consultation allergy record are snapshots. S
 
 The allergy snapshot may not reflect a later clinical addendum or newly discovered allergy. Both prescriber and dispenser must verify current information with the patient and clinical team; there is no automated allergy/interaction check. The confirmation records a staff workflow, not an independently verified clinical assessment.
 
-Only whole-number stock quantities are supported, in the declared dispensing unit. No pack conversion, substitution, dose recommendation, renal/weight calculation, automated prescription expiry, medication-administration record, controlled-drug register, barcode integration, supplier purchasing, quarantine workflow, return/refund, cross-branch transfer or automatic invoice generation is implemented. Test with synthetic data; hospital-specific pharmacy validation and deployment controls remain required before live use.
+Only whole-number stock quantities are supported, in the declared dispensing unit. No pack conversion, substitution, dose recommendation, renal/weight calculation, automated prescription expiry, controlled-drug register, barcode integration, supplier purchasing, quarantine workflow, return/refund, cross-branch transfer or automatic invoice generation is implemented. Test with synthetic data; hospital-specific pharmacy validation and deployment controls remain required before live use.
+
+## Nursing and inpatient care
+
+Apply `python manage.py migrate` after pulling the update, restart the two servers, and sign out/sign in to refresh the **Nursing & inpatient care** menu. Existing admissions and clinical records are preserved. Nothing is seeded as a bedside observation, care plan or medication dose.
+
+### Bedside sample workflow
+
+1. Admit a synthetic patient through **Admissions & wards**. Open **Open care record** on the admission row, or choose an admission from **Nursing & inpatient care**. Search by patient, hospital number, ward or bed; use the admission status filter to retrieve discharged history.
+2. As nurse or administrator, choose **Observations → Record observation**. Enter actual event time in WAT and at least one measured value. Missing measurements remain unrecorded; zero pain scores remain zero. Blood pressure requires both values. Event times before admission or in the future are rejected. The chart plots original observations on the current page only; review displayed addenda for corrections. Data-entry limits are not normal ranges, an early-warning score or a clinical alert system.
+3. Record **Nursing notes** or **Care plans**. Plans require a summary, goals and interventions and may include a review date. Plans are narrative records; reviews/evaluations can be dated addenda. Task assignment, completion tracking and reminder scheduling are not implemented.
+4. Doctors/administrators record **Ward rounds** with assessment and plan. Doctors can read nursing records but cannot sign nursing observations, notes, plans or medication administration as a nurse. Nurses can read ward rounds but cannot sign or amend them. Administrators can test both roles.
+5. New bedside records are allowed only while the admission is active. After discharge the original records remain readable, and authorised staff can append dated corrections. Admissions are read-only in Django administration; create and discharge them through the application to preserve their clinical identity. Signed entries cannot be overwritten or deleted through API or administration. The original event time and the actual recording/signing time are kept separately, together with staff identity.
+
+### Medication administration record
+
+As nurse/administrator, open **Medication record → Record medication**. Select a current prescription for this patient, verify it is appropriate for this admission and check current allergies with the patient/clinical team. Specify the agreed administration slot and actual event time in WAT. No schedule or medication doses are generated automatically.
+
+- For **Given**, choose the matching pharmacy dispensing entry, manually enter the actual dose and quantity used in dispensing units, and confirm checks. Fractional usage up to three decimal places is supported; no strength/pack/dose conversion is calculated. Supply must already have been dispensed, must not have expired at the event date and cannot be consumed beyond its dispensed quantity. Inactive medicines and cancelled prescriptions are blocked.
+- For **Not given**, **Refused** or **Withheld**, record a reason and leave dose, quantity and dispensed supply blank. These events do not consume supplies. A later given event may follow a not-given entry for the exact same prescription and administration slot, preserving both events. A second given event for that slot is blocked, including concurrent submissions.
+- Retrying the same administration-action identifier does not record a second dose. Consumed quantities are checked under database locks. Administration uses the patient's dispensed supply and does not subtract pharmacy inventory again.
+- Use **Add dated correction** to append context. Corrections do not erase a historical given dose, reverse its counted usage or automatically return medicine to stock. Discrepancies need clinical/pharmacy review; automated reversal/reconciliation is not implemented.
+
+This is a manual documentation workflow, not an automated medication scheduler or validated prescribing decision system. It does not calculate or verify clinical dosing, allergy interactions, suitable administration windows, duplicate doses entered under different slot times, infusion rates, fluid balances, early-warning scores, clinical escalation or controlled-drug double checks. There is no administration record for medicines without a matching system prescription/dispensing entry. Continue testing with synthetic data until hospital-specific nursing, pharmacy and clinical governance reviews and deployment controls are complete.

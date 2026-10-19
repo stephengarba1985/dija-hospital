@@ -369,6 +369,77 @@ class StockMovement(models.Model):
         ]
 
 
+class InpatientRecord(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    admission = models.ForeignKey(Admission, on_delete=models.PROTECT, related_name='care_records')
+    kind = models.CharField(max_length=20, choices=[('observation', 'Observation'), ('nursing_note', 'Nursing note'), ('care_plan', 'Care plan'), ('ward_round', 'Ward round')])
+    occurred_at = models.DateTimeField()
+    content = models.TextField(blank=True, max_length=10000)
+    goals = models.TextField(blank=True, max_length=5000)
+    interventions = models.TextField(blank=True, max_length=5000)
+    review_date = models.DateField(null=True, blank=True)
+    temperature = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, validators=[MinValueValidator(25), MaxValueValidator(45)])
+    pulse = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(20), MaxValueValidator(250)])
+    respiratory_rate = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    oxygen_saturation = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    systolic = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(40), MaxValueValidator(300)])
+    diastolic = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(20), MaxValueValidator(200)])
+    pain_score = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(10)])
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-occurred_at', '-pk']
+
+    def clean(self):
+        vitals = ['temperature', 'pulse', 'respiratory_rate', 'oxygen_saturation', 'systolic', 'diastolic', 'pain_score']
+        if self.kind == 'observation':
+            if not any(getattr(self, field) is not None for field in vitals):
+                raise ValidationError('Record at least one measured observation.')
+            if (self.systolic is None) != (self.diastolic is None):
+                raise ValidationError('Enter both blood pressure values or leave both blank.')
+            if self.systolic is not None and self.diastolic is not None and self.systolic <= self.diastolic:
+                raise ValidationError('Systolic pressure must exceed diastolic pressure.')
+        elif not self.content.strip():
+            raise ValidationError('Enter the clinical record text.')
+        if self.kind == 'care_plan' and (not self.goals.strip() or not self.interventions.strip()):
+            raise ValidationError('A care plan requires goals and planned interventions.')
+        if self.admission_id and self.branch_id != self.admission.branch_id:
+            raise ValidationError('The care record must belong to the admission branch.')
+
+
+class MedicationAdministration(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    admission = models.ForeignKey(Admission, on_delete=models.PROTECT, related_name='medication_records')
+    prescription = models.ForeignKey(Prescription, on_delete=models.PROTECT)
+    dispense = models.ForeignKey(Dispense, on_delete=models.PROTECT, null=True, blank=True)
+    scheduled_at = models.DateTimeField()
+    occurred_at = models.DateTimeField()
+    outcome = models.CharField(max_length=12, choices=[('given', 'Given'), ('not_given', 'Not given'), ('refused', 'Refused'), ('withheld', 'Withheld')])
+    dose_given = models.CharField(max_length=200, blank=True)
+    quantity_used = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, validators=[MinValueValidator(Decimal('0.001')), MaxValueValidator(1000000)])
+    reason = models.TextField(blank=True, max_length=2000)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    request_id = models.UUIDField(unique=True)
+
+    class Meta:
+        ordering = ['-occurred_at', '-pk']
+        constraints = [models.UniqueConstraint(fields=['admission', 'prescription', 'scheduled_at'], condition=Q(outcome='given'), name='one_given_dose_per_admission_slot')]
+
+
+class InpatientAddendum(models.Model):
+    care_record = models.ForeignKey(InpatientRecord, on_delete=models.PROTECT, null=True, blank=True, related_name='addenda')
+    medication_record = models.ForeignKey(MedicationAdministration, on_delete=models.PROTECT, null=True, blank=True, related_name='addenda')
+    note = models.TextField(max_length=10000)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['recorded_at', 'pk']
+        constraints = [models.CheckConstraint(condition=(Q(care_record__isnull=False) & Q(medication_record__isnull=True)) | (Q(care_record__isnull=True) & Q(medication_record__isnull=False)), name='inpatient_addendum_one_target')]
+
+
 class AuditEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, null=True)

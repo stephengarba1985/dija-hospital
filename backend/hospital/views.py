@@ -18,6 +18,7 @@ from django.views.decorators.http import require_http_methods
 from .models import Branch, Department, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum
 
 ROLES = {
+    'nursing': {'administrator', 'doctor', 'nurse'},
     'pharmacy': {'administrator', 'doctor', 'nurse', 'pharmacist'},
     'laboratory': {'administrator', 'doctor', 'nurse', 'laboratory'},
     'consultations': {'administrator', 'doctor', 'nurse'},

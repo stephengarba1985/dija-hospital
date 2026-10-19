@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Branch, Department, StaffProfile, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum, LabTest, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement
+from .models import Branch, Department, StaffProfile, Patient, Appointment, Admission, Invoice, AuditEvent, Consultation, ConsultationAddendum, LabTest, LabOrder, LabReport, LabReportAddendum, Medicine, MedicineBatch, Prescription, Dispense, StockMovement, InpatientRecord, MedicationAdministration, InpatientAddendum
 
 @admin.register(Patient)
 class PatientAdmin(admin.ModelAdmin):
@@ -21,10 +21,10 @@ class AuditAdmin(admin.ModelAdmin):
 
 # The administration console is for trusted superusers only. Branch staff use the scoped API.
 admin.site.has_permission = lambda request: request.user.is_active and request.user.is_superuser
-admin.site.register([Branch, Department, Appointment, Admission, Invoice])
+admin.site.register([Branch, Department, Appointment, Invoice])
 
 
-@admin.register(Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, MedicineBatch, Prescription, Dispense, StockMovement)
+@admin.register(Admission, Consultation, ConsultationAddendum, LabOrder, LabReport, LabReportAddendum, MedicineBatch, Prescription, Dispense, StockMovement, InpatientRecord, MedicationAdministration, InpatientAddendum)
 class SignedClinicalRecordAdmin(admin.ModelAdmin):
     def has_add_permission(self, request): return False
     def has_change_permission(self, request, obj=None): return False

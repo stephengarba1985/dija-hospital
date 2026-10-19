@@ -1,7 +1,14 @@
 from django.urls import path
-from . import views, lab_views, pharmacy_views
+from . import views, lab_views, pharmacy_views, nursing_views
 
 urlpatterns = [
+    path('nursing/', nursing_views.admissions),
+    path('nursing/<int:pk>/', nursing_views.admission_detail),
+    path('nursing/<int:pk>/records/', nursing_views.records),
+    path('nursing/<int:pk>/prescriptions/', nursing_views.medication_options),
+    path('nursing/<int:pk>/medications/', nursing_views.medications),
+    path('nursing/<int:pk>/records/<int:record_id>/addenda/', nursing_views.addendum, {'record_type':'care'}),
+    path('nursing/<int:pk>/medications/<int:record_id>/addenda/', nursing_views.addendum, {'record_type':'medication'}),
     path('pharmacy/', pharmacy_views.prescriptions),
     path('pharmacy/medicines/', pharmacy_views.medicines),
     path('pharmacy/batches/', pharmacy_views.batches),
